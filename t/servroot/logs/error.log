@@ -1,0 +1,3 @@
+2018/02/15 09:46:52 [notice] 28712#28712: using inherited sockets from "/home/alex/bin_install"
+2018/02/15 09:46:52 [emerg] 28712#28712: invalid socket number "/home/alex/bin_install" in NGINX environment variable, ignoring
+2018/02/15 09:46:52 [emerg] 28712#28712: unknown directive "stats_echo" in /home/alex/openresty/stats-nginx-module/t/servroot/conf/nginx.conf:40
