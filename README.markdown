@@ -7,7 +7,7 @@ Name
 Status
 ======
 
-This Nginx module is still experimental.
+This Nginx module is still experimental and developing.
 
 
 Synopsis
@@ -15,7 +15,7 @@ Synopsis
 
 ```nginx
 http {
-    stats_format main '${remote_addr:i} $bytes_sent $body_bytes_sent';
+    stats_format main '${remote_addr:c} $bytes_sent ${body_bytes_sent:a}';
     stats_zone $http_host zone=stats:10m format=main;
 
     server {
@@ -36,3 +36,9 @@ http {
     }
 }
 ```
+
+
+Author
+======
+
+Alex (张超) Zhang zchao1995@gmail.com, UPYUN Inc.
