@@ -9,18 +9,18 @@
 #include <ngx_http.h>
 
 
-#define NGX_HTTP_STATS_VAR_ACCUMULATE  0
-#define NGX_HTTP_STATS_VAR_INTACT      1
+#define NGX_HTTP_STATS_VAR_ACCUMULATE       0
+#define NGX_HTTP_STATS_VAR_CONSTANT         1
 
-#define NGX_HTTP_STATS_ECHO_RAW        0
-#define NGX_HTTP_STATS_ECHO_HTML       1
-#define NGX_HTTP_STATS_ECHO_JSON       2
+#define NGX_HTTP_STATS_ECHO_RAW             0
+#define NGX_HTTP_STATS_ECHO_HTML            1
+#define NGX_HTTP_STATS_ECHO_JSON            2
 
-#define NGX_HTTP_STATS_DELIMITER      "\t"
+#define NGX_HTTP_STATS_DELIMITER            "\t"
 
 
 static ngx_str_t ngx_http_stats_var_accumulate = ngx_string("a");
-static ngx_str_t ngx_http_stats_var_intact = ngx_string("i");
+static ngx_str_t ngx_http_stats_var_constant = ngx_string("c");
 
 typedef struct ngx_http_stats_op_s  ngx_http_stats_op_t;
 
@@ -31,73 +31,69 @@ typedef size_t (*ngx_http_stats_op_getlen_pt) (ngx_http_request_t *r,
 
 
 struct ngx_http_stats_op_s {
-    size_t                       len;
-    uint8_t                      type;
-    ngx_http_stats_op_getlen_pt  getlen;
-    ngx_http_stats_op_run_pt     run;
-    uintptr_t                    data;
+    size_t                              len;
+    uint8_t                             type;
+    ngx_http_stats_op_getlen_pt         getlen;
+    ngx_http_stats_op_run_pt            run;
+    uintptr_t                           data;
 };
 
 
 typedef struct {
-    ngx_str_t                    name;
-    ngx_array_t                 *ops;    /* array of ngx_http_stats_op_t */
-    uint32_t                     hash;
+    ngx_str_t                           name;
+    ngx_array_t                        *ops;    /* ngx_http_stats_op_t */
+    uint32_t                            hash;
 } ngx_http_stats_format_t;
 
 
 typedef struct {
-    off_t                        numeric;
-    uint32_t                     len;
-    uint8_t                      type;
-    u_char                       data[1];
+    uint32_t                            len;
+    uint8_t                             type;
+    u_char                              data[1];
 } ngx_http_stats_node_item_t;
 
 
 typedef struct {
-    u_char                       color;
-    u_char                       dummy;
-    uint32_t                     fmt_hash;
-    ngx_queue_t                  queue;
-    u_short                      item_count;
-    u_short                      len;
-    u_char                       data[1];
+    u_char                              color;
+    u_char                              dummy;
+    ngx_queue_t                         queue;
+    u_short                             item_count;
+    u_short                             len;
+    size_t                              size;
+    u_char                              data[1];
 } ngx_http_stats_node_t;
 
 
 typedef struct {
-    ngx_rbtree_t                 rbtree;
-    ngx_rbtree_node_t            sentinel;
-    ngx_queue_t                  queue;
-    size_t                       total_size;
-    uint32_t                     count;
-    uint8_t                      version;
+    ngx_rbtree_t                        rbtree;
+    ngx_rbtree_node_t                   sentinel;
+    ngx_queue_t                         queue;
+    size_t                              total_size;
+    uint32_t                            count;
 } ngx_http_stats_shctx_t;
 
 
 typedef struct {
-    ngx_http_stats_shctx_t      *sh;
-    ngx_slab_pool_t             *shpool;
-
-    ngx_http_complex_value_t     key;
-
-    ngx_http_stats_format_t     *fmt;
+    ngx_http_stats_shctx_t             *sh;
+    ngx_slab_pool_t                    *shpool;
+    ngx_http_complex_value_t            key;
+    ngx_http_stats_format_t            *fmt;
 } ngx_http_stats_ctx_t;
 
 
 typedef struct {
-    ngx_shm_zone_t              *shm_zone;
+    ngx_shm_zone_t                     *shm_zone;
 } ngx_http_stats_t;
 
 
 typedef struct {
-    ngx_array_t                  stats;   /* array of ngx_http_stats_t */
-    ngx_array_t                  formats; /* array of ngx_http_stats_format_t */
-    ngx_uint_t                   fmt;
-    ngx_shm_zone_t              *shm_zone;
-    ngx_http_complex_value_t    *echo_key;
+    ngx_array_t                         stats;   /* ngx_http_stats_t */
+    ngx_array_t                         formats; /* ngx_http_stats_format_t */
+    ngx_uint_t                          fmt;
+    ngx_shm_zone_t                     *shm_zone;
+    ngx_http_complex_value_t           *echo_key;
 
-    unsigned                     clear:1;
+    unsigned                            clear:1;
 } ngx_http_stats_conf_t;
 
 
@@ -124,7 +120,7 @@ static void ngx_http_stats_rbtree_insert_value(ngx_rbtree_node_t *temp,
     ngx_rbtree_node_t *node, ngx_rbtree_node_t *sentinel);
 static ngx_int_t ngx_http_stats_variable_compile(ngx_conf_t *cf,
     ngx_http_stats_op_t *op, ngx_str_t *value);
-static ngx_int_t ngx_http_stats_check_var_mark(ngx_str_t *mark);
+static ngx_int_t ngx_http_stats_check_var_type(ngx_str_t *type);
 static char *ngx_http_stats_zone(ngx_conf_t *cf, ngx_command_t *cmd,
     void *conf);
 static char *ngx_http_stats(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
@@ -212,8 +208,8 @@ static void
 ngx_http_stats_echo_walk(ngx_log_t *log, ngx_rbtree_node_t *node,
     ngx_buf_t *buf, ngx_http_stats_ctx_t *ctx, ngx_uint_t clear)
 {
-    u_char                      *p, *q, *s;
-    size_t                       numeric_len, numeric;
+    u_char                      *p, *q;
+    off_t                        numeric;
     ngx_int_t                    i;
     ngx_http_stats_node_t       *snode;
     ngx_http_stats_node_item_t  *item;
@@ -244,43 +240,19 @@ ngx_http_stats_echo_walk(ngx_log_t *log, ngx_rbtree_node_t *node,
 #endif
 
         if (item->type == NGX_HTTP_STATS_VAR_ACCUMULATE) {
-            numeric = item->numeric;
-            numeric_len = 0;
-
-            if (numeric == 0) {
-                numeric_len = 1;
-                *p++ = '0';
-            }
-
-            while (numeric > 0) {
-                numeric_len++;
-                numeric /= 10;
-            }
-
-            s = p;
-            numeric = item->numeric;
-
-            while (numeric > 0) {
-                *(s + numeric_len - 1) = (numeric % 10) + '0';
-                numeric /= 10;
-
-                p++;
-                numeric_len--;
-            }
-
-            q += sizeof(ngx_http_stats_node_item_t);
+            numeric = ((off_t *) item->data)[0];
+            p = ngx_sprintf(p, "%O", numeric);
 
             if (clear) {
-                item->numeric = 0;
+                ((off_t *) item->data)[0] = 0;
             }
 
         } else {
             p = ngx_cpymem(p, item->data, item->len);
-            q = item->data + item->len;
         }
-    }
 
-    *p++ = '\n';
+        q = item->data + item->len;
+    }
 
     buf->last = p;
 
@@ -293,7 +265,7 @@ static ngx_int_t
 ngx_http_stats_echo_walk_specific(ngx_pool_t *pool, ngx_buf_t **buf,
     ngx_http_stats_ctx_t *ctx, ngx_str_t *key, ngx_uint_t clear)
 {
-    u_char                      *p, *q, *s;
+    u_char                      *p, *q;
     ngx_int_t                    i, rc;
     size_t                       size, numeric;
     uint32_t                     hash;
@@ -302,10 +274,7 @@ ngx_http_stats_echo_walk_specific(ngx_pool_t *pool, ngx_buf_t **buf,
     ngx_http_stats_node_t       *snode;
     ngx_http_stats_node_item_t  *item;
 
-    ngx_crc32_init(hash);
-    ngx_crc32_update(&hash, key->data, key->len);
-    ngx_crc32_update(&hash, (u_char *) &ctx->sh->version, 1);
-    ngx_crc32_final(hash);
+    hash = ngx_crc32_short(key->data, key->len);
 
     node = ctx->sh->rbtree.root;
     sentinel = ctx->sh->rbtree.sentinel;
@@ -332,25 +301,16 @@ ngx_http_stats_echo_walk_specific(ngx_pool_t *pool, ngx_buf_t **buf,
 
         /* rc == 0 */
 
-        p = snode->data + snode->len;
-
         size = snode->len + sizeof(NGX_HTTP_STATS_DELIMITER) - 1;
+        p = snode->data;
+
+        /* TODO cached the total item size to avoid this loop */
 
         for (i = 0; i < snode->item_count; i++) {
-
             item = (ngx_http_stats_node_item_t *) p;
-
-            if (item->type == NGX_HTTP_STATS_VAR_ACCUMULATE) {
-                size += NGX_SIZE_T_LEN;
-                p += sizeof(ngx_http_stats_node_item_t);
-
-            } else {
-                size += item->len;
-                p = item->data + item->len;
-            }
+            p = item->data + item->len;
+            size += item->len;
         }
-
-        size += sizeof("\n") - 1;
 
         *buf = ngx_create_temp_buf(pool, size);
         if (*buf == NULL) {
@@ -370,42 +330,20 @@ ngx_http_stats_echo_walk_specific(ngx_pool_t *pool, ngx_buf_t **buf,
             if (item->type == NGX_HTTP_STATS_VAR_ACCUMULATE) {
 
                 size = 0;
-                numeric = item->numeric;
-
-                if (numeric == 0) {
-                    *q++ = '0';
-                    size = 1;
-                }
-
-                while (numeric > 0) {
-                    size++;
-                    numeric /= 10;
-                }
-
-                numeric = item->numeric;
-
-                s = q;
-
-                while (numeric > 0) {
-                    *(s + size - 1) = numeric % 10 + '0';
-                    numeric /= 10;
-                    size--;
-                    q++;
-                }
-
-                p += sizeof(ngx_http_stats_node_item_t);
+                numeric = ((off_t *) item->data)[0];
 
                 if (clear) {
-                    item->numeric = 0;
+                    ((off_t *) item->data)[0] = 0;
                 }
+
+                q = ngx_sprintf(q, "%O", numeric);
 
             } else {
                 q = ngx_cpymem(q, item->data, item->len);
-                p = item->data + item->len;
             }
-        }
 
-        *q++ = '\n';
+            p = item->data + item->len;
+        }
 
         (*buf)->last = q;
 
@@ -460,7 +398,14 @@ ngx_http_stats_echo_handler(ngx_http_request_t *r)
         break;
 
     default:
-        break;
+        r->headers_out.status = NGX_HTTP_NOT_IMPLEMENTED;
+
+        rc = ngx_http_send_header(r);
+        if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) {
+            return rc;
+        }
+
+        return ngx_http_output_filter(r, NULL);
     }
 
     cl.next = NULL;
@@ -498,8 +443,10 @@ ngx_http_stats_echo_handler(ngx_http_request_t *r)
 
         if (rc == NGX_DECLINED) {
             /* not found */
+
             ngx_memzero(&special, sizeof(ngx_buf_t));
             cl.buf = &special;
+            r->headers_out.status = NGX_HTTP_NOT_FOUND;
         }
     }
 
@@ -519,11 +466,6 @@ send:
 
     r->headers_out.content_length_n = ngx_buf_size(cl.buf);
     if (r->headers_out.content_length_n == 0) {
-
-        /* XXX this is a special buf,
-         * so erase flags about in memory and in file
-         */
-
         cl.buf->temporary = 0;
         cl.buf->memory = 0;
         cl.buf->mmap = 0;
@@ -532,7 +474,7 @@ send:
 
 #if (NGX_DEBUG)
 
-    ngx_str_t debug_str;
+    ngx_str_t  debug_str;
 
     ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "http stats echo got buf: 0x%xp, size: %uz",
@@ -593,10 +535,7 @@ ngx_http_stats_handler(ngx_http_request_t *r)
             continue;
         }
 
-        ngx_crc32_init(hash);
-        ngx_crc32_update(&hash, key.data, key.len);
-        ngx_crc32_update(&hash, (u_char *) &ctx->sh->version, 1);
-        ngx_crc32_final(hash);
+        hash = ngx_crc32_short(key.data, key.len);
 
         ngx_shmtx_lock(&ctx->shpool->mutex);
 
@@ -627,19 +566,11 @@ ngx_http_stats_node_merge(ngx_http_request_t *r, ngx_http_stats_t *stats,
     ngx_http_stats_node_item_t *item;
 
 #if (NGX_DEBUG)
-
     ngx_str_t                   debug_str;
-
 #endif
 
     ctx = stats->shm_zone->data;
-
-    if (ctx->fmt->hash != node->fmt_hash) {
-        return NGX_DECLINED;
-    }
-
     ops = ctx->fmt->ops->elts;
-
     p = node->data + node->len;
 
     size = 0;
@@ -648,27 +579,11 @@ ngx_http_stats_node_merge(ngx_http_request_t *r, ngx_http_stats_t *stats,
 
         item = (ngx_http_stats_node_item_t *) p;
 
-        if (ops[i].type != item->type) {
-            return NGX_DECLINED;
+        if (size < item->len) {
+            size = item->len;
         }
 
-        if (ops[i].len) {
-            len = ops[i].len;
-
-        } else {
-            len = ops[i].getlen(r, ops[i].data);
-        }
-
-        if (size < len) {
-            size = len;
-        }
-
-        if (ops[i].type != NGX_HTTP_STATS_VAR_ACCUMULATE) {
-            p = item->data + item->len;
-
-        } else {
-            p += sizeof(ngx_http_stats_node_item_t);
-        }
+        p = item->data + item->len;
     }
 
     temp.data = ngx_palloc(r->pool, size);
@@ -696,34 +611,34 @@ ngx_http_stats_node_merge(ngx_http_request_t *r, ngx_http_stats_t *stats,
                 return NGX_ERROR;
             }
 
-            item->numeric += value;
+#if (NGX_DEBUG)
+            ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                           "http stats existing node numeric value: "
+                           "%uz at 0x%xp, pending to add: %uz",
+                           ((off_t *) item->data)[0], item->data, value);
+#endif
+
+            value += ((off_t *) item->data)[0];
+            ((off_t *) item->data)[0] = value;
 
 #if (NGX_DEBUG)
-
             ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                           "http stats merged numeric value: %uz, item: 0x%xp",
-                            item->numeric, item);
-
+                           "http stats merged numeric value %uz at 0x%xp",
+                           ((off_t *) item->data)[0], item);
 #endif
         } else {
-#if (NGX_DEBUG)
 
+#if (NGX_DEBUG)
             debug_str.len = item->len;
             debug_str.data = item->data;
 
             ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                           "http stats kept literal: \"%V\", item: 0x%xp",
+                           "http stats kept literal: \"%V\" at 0x%xp",
                             &debug_str, item);
-
 #endif
         }
 
-        if (ops[i].type != NGX_HTTP_STATS_VAR_ACCUMULATE) {
-            p = item->data + item->len;
-
-        } else {
-            p += sizeof(ngx_http_stats_node_item_t);
-        }
+        p = item->data + item->len;
     }
 
     return NGX_OK;
@@ -737,14 +652,14 @@ ngx_http_stats_lookup(ngx_http_request_t *r, ngx_http_stats_t *stats,
     u_char                      *p;
     ngx_int_t                    rc;
     ngx_uint_t                   i;
-    ngx_str_t                    temp;
     size_t                       size, len, total_size;
+    off_t                        value;
+    ngx_str_t                    temp;
     ngx_rbtree_node_t           *node, *sentinel;
     ngx_http_stats_ctx_t        *ctx;
     ngx_http_stats_node_t       *snode;
     ngx_http_stats_op_t         *ops, op;
     ngx_http_stats_node_item_t  *item;
-
     static u_char                s[NGX_SIZE_T_LEN];
 
     ctx = stats->shm_zone->data;
@@ -771,20 +686,7 @@ ngx_http_stats_lookup(ngx_http_request_t *r, ngx_http_stats_t *stats,
             ngx_queue_remove(&snode->queue);
             ngx_queue_insert_head(&ctx->sh->queue, &snode->queue);
 
-            rc = ngx_http_stats_node_merge(r, stats, snode);
-            if (rc == NGX_ERROR || rc == NGX_OK) {
-                return rc;
-            }
-
-            /* rc == NGX_DECLINED or rc == NGX_ABORT */
-
-            ngx_crc32_init(hash);
-            ngx_crc32_update((uint32_t *) &hash, key->data, key->len);
-            ngx_crc32_update((uint32_t *) &hash, (u_char *) &ctx->sh->version,
-                             1);
-            ngx_crc32_final(hash);
-
-            break;
+            return ngx_http_stats_node_merge(r, stats, snode);
         }
 
         node = (rc < 0) ? node->left : node->right;
@@ -803,7 +705,8 @@ ngx_http_stats_lookup(ngx_http_request_t *r, ngx_http_stats_t *stats,
 
         op = ops[i];
         if (op.type == NGX_HTTP_STATS_VAR_ACCUMULATE) {
-            total_size += NGX_SIZE_T_LEN;
+            total_size += sizeof(off_t);
+            len += sizeof(off_t);
             continue;
         }
 
@@ -820,12 +723,12 @@ ngx_http_stats_lookup(ngx_http_request_t *r, ngx_http_stats_t *stats,
 
     total_size += key->len;
 
-    total_size += sizeof(NGX_HTTP_STATS_DELIMITER) - 1 + sizeof("\n") - 1;
+    total_size += sizeof(NGX_HTTP_STATS_DELIMITER) - 1;
 
-    size = offsetof(ngx_rbtree_node_t, color)
-           + offsetof(ngx_http_stats_node_t, data)
-           + key->len
-           + len;
+    size = offsetof(ngx_rbtree_node_t, color)           /* rb_node */
+           + offsetof(ngx_http_stats_node_t, data)      /* stats_ndoe */
+           + key->len                                   /* key */
+           + len;                                       /* value */
 
     ngx_http_stats_expire(ctx, 1);
 
@@ -835,7 +738,7 @@ ngx_http_stats_lookup(ngx_http_request_t *r, ngx_http_stats_t *stats,
 
         node = ngx_slab_alloc_locked(ctx->shpool, size);
         if (node == NULL) {
-            ngx_log_error(NGX_LOG_ALERT,  r->connection->log, 0,
+            ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0,
                           "could not allocate node%s", ctx->shpool->log_ctx);
             return NGX_ERROR;
         }
@@ -847,8 +750,8 @@ ngx_http_stats_lookup(ngx_http_request_t *r, ngx_http_stats_t *stats,
     snode->len = key->len;
     ngx_memcpy(snode->data, key->data, snode->len);
 
+    snode->size = total_size;
     snode->item_count = ctx->fmt->ops->nelts;
-    snode->fmt_hash = ctx->fmt->hash;
 
     p = snode->data + snode->len;
 
@@ -864,48 +767,43 @@ ngx_http_stats_lookup(ngx_http_request_t *r, ngx_http_stats_t *stats,
 
             (void) op.run(r, s, &op, &size);
 
-            item->len = 0;
-
-            item->numeric = ngx_atoof(s, size);
-            if (item->numeric == NGX_ERROR) {
-                temp.data = p;
+            value = ngx_atoof(s, size);
+            if (value == NGX_ERROR) {
+                temp.data = s;
                 temp.len = size;
-
                 ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                               "could not convert \"%V\" to numeric", temp);
-
                 goto failed;
             }
 
-#if (NGX_DEBUG)
+            item->len = sizeof(off_t);
+            ((off_t *) item->data)[0] = value;
 
+#if (NGX_DEBUG)
             ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                           "http stats got numeric: %uz, item: 0x%xp",
-                           item->numeric, item);
+                           "http stats set numeric %uz at 0x%xp",
+                           ((off_t *) item->data)[0], item->data);
 #endif
 
-            p += sizeof(ngx_http_stats_node_item_t);
+            p = item->data + item->len;
 
             continue;
         }
 
-        /* op->type == NGX_HTTP_STATS_VAR_INTACT */
+        /* op->type == NGX_HTTP_STATS_VAR_CONSTANT */
 
         p = op.run(r, item->data, &op, &size);
 
         item->len = size;
-        item->numeric = -1;
 
 #if (NGX_DEBUG)
-
         temp.data = item->data;
         temp.len = item->len;
 
         ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                       "http stats got literal: \"%V\", item: 0x%xp",
-                       &temp, item);
+                       "http stats set literal \"%V\" at 0x%xp",
+                       &temp, item->data);
 #endif
-
     }
 
     ngx_rbtree_insert(&ctx->sh->rbtree, node);
@@ -961,6 +859,7 @@ ngx_http_stats_expire(ngx_http_stats_ctx_t *ctx, ngx_uint_t n)
         ngx_slab_free_locked(ctx->shpool, node);
 
         ctx->sh->count--;
+        ctx->sh->total_size -= snode->size;
     }
 }
 
@@ -1026,10 +925,11 @@ ngx_http_stats_zone(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
                 return NGX_CONF_ERROR;
             }
 
-            /* mimic ngx_http_limit_req_module */
             if (size < (ssize_t) (8 * ngx_pagesize)) {
+
                 ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
                                    "zone \"%V\" is too small", &value[i]);
+
                 return NGX_CONF_ERROR;
             }
 
@@ -1166,14 +1066,14 @@ ngx_http_stats(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 static char *
 ngx_http_stats_format(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
-    ngx_http_stats_conf_t *scf = conf;
-
     u_char                   *buf, *p;
     char                     *conf_rc;
     size_t                    size;
     ngx_uint_t                i;
     ngx_str_t                *value;
     ngx_http_stats_format_t  *fmt;
+
+    ngx_http_stats_conf_t *scf = conf;
 
     value = cf->args->elts;
 
@@ -1304,6 +1204,9 @@ ngx_http_stats_compile_format(ngx_conf_t *cf, ngx_array_t *flushes,
                             if (type.len == 0) {
                                 goto invalid;
                             }
+
+                        } else {
+                            type = ngx_http_stats_var_accumulate;
                         }
 
                         break;
@@ -1329,13 +1232,12 @@ ngx_http_stats_compile_format(ngx_conf_t *cf, ngx_array_t *flushes,
                     }
 
                     /* we use the our own format ${var:type} to mark whether
-                     * this variable should be accumulated or kept intact or
+                     * this variable should be accumulated or kept constant or
                      * just cover the previous value
                      */
                     if (bracket && ch == ':') {
                         mark = 1;
                         type.len = 0;
-
                         continue;
                     }
 
@@ -1353,9 +1255,9 @@ ngx_http_stats_compile_format(ngx_conf_t *cf, ngx_array_t *flushes,
                     goto invalid;
                 }
 
-                mark = ngx_http_stats_check_var_mark(&type);
+                mark = ngx_http_stats_check_var_type(&type);
 
-                if (mark < NGX_HTTP_STATS_VAR_ACCUMULATE) {
+                if (mark == NGX_DECLINED) {
                     ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
                                        "invalid variable mark \"%V\"in "
                                        "\"${%V:%V}\"",
@@ -1365,9 +1267,7 @@ ngx_http_stats_compile_format(ngx_conf_t *cf, ngx_array_t *flushes,
 
                 op->type = mark;
 
-                if (ngx_http_stats_variable_compile(cf, op, &var)
-                    != NGX_OK)
-                {
+                if (ngx_http_stats_variable_compile(cf, op, &var) != NGX_OK) {
                     return NGX_CONF_ERROR;
                 }
 
@@ -1391,7 +1291,7 @@ ngx_http_stats_compile_format(ngx_conf_t *cf, ngx_array_t *flushes,
 
                 op->len = len;
                 op->getlen = NULL;
-                op->type = NGX_HTTP_STATS_VAR_INTACT;
+                op->type = NGX_HTTP_STATS_VAR_CONSTANT;
 
                 if (len <= sizeof(uintptr_t)) {
                     op->run = ngx_http_stats_copy_short;
@@ -1463,30 +1363,32 @@ ngx_http_stats_rbtree_insert_value(ngx_rbtree_node_t *temp,
     }
 
     *p = node;
+
     node->parent = temp;
     node->left = sentinel;
     node->right = sentinel;
+
     ngx_rbt_red(node);
 }
 
 
 
 static ngx_inline ngx_int_t
-ngx_http_stats_check_var_mark(ngx_str_t *mark)
+ngx_http_stats_check_var_type(ngx_str_t *type)
 {
-    if (mark->len == ngx_http_stats_var_accumulate.len
-        && ngx_strncmp(mark->data, ngx_http_stats_var_accumulate.data,
-                       mark->len)
-        == 0)
+    if (type->len == ngx_http_stats_var_accumulate.len
+        && ngx_strncmp(type->data, ngx_http_stats_var_accumulate.data,
+                       type->len)
+           == 0)
     {
         return NGX_HTTP_STATS_VAR_ACCUMULATE;
     }
 
-    if (mark->len == ngx_http_stats_var_intact.len
-        && ngx_strncmp(mark->data, ngx_http_stats_var_intact.data, mark->len)
-        == 0)
+    if (type->len == ngx_http_stats_var_constant.len
+        && ngx_strncmp(type->data, ngx_http_stats_var_constant.data, type->len)
+           == 0)
     {
-        return NGX_HTTP_STATS_VAR_INTACT;
+        return NGX_HTTP_STATS_VAR_CONSTANT;
     }
 
     return NGX_DECLINED;
@@ -1596,17 +1498,26 @@ ngx_http_stats_init_zone(ngx_shm_zone_t *shm_zone, void *data)
                           " while previously it used the \"%V\" key",
                           &shm_zone->shm.name, &ctx->key.value,
                           &octx->key.value);
+
             return NGX_ERROR;
         }
 
         ctx->sh = octx->sh;
         ctx->shpool = octx->shpool;
 
-        /* it's safe to compare the format hash and change ctx->sh->version,
-         * since workers never change this.
-         */
         if (ctx->fmt->hash != octx->fmt->hash) {
-            ctx->sh->version++;
+
+            /*
+             * for the sake of convenience, we don't support the stats format
+             * changes when reloading, one should always trigger the hot update
+             * in this case.
+             */
+
+            ngx_log_error(NGX_LOG_EMERG, shm_zone->shm.log, 0,
+                          "stats \"%V\" uses a different format "
+                          "with previous", &shm_zone->shm.name);
+
+            return NGX_ERROR;
         }
 
         return NGX_OK;
@@ -1616,7 +1527,6 @@ ngx_http_stats_init_zone(ngx_shm_zone_t *shm_zone, void *data)
 
     if (shm_zone->shm.exists) {
         ctx->sh = ctx->shpool->data;
-
         return NGX_OK;
     }
 
@@ -1634,7 +1544,6 @@ ngx_http_stats_init_zone(ngx_shm_zone_t *shm_zone, void *data)
 
     ctx->sh->total_size = 0;
     ctx->sh->count = 0;
-    ctx->sh->version = 0;
 
     len = sizeof(" in stats zone \"\"") + shm_zone->shm.name.len;
 
@@ -1709,9 +1618,14 @@ ngx_http_stats_echo(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
             } else if (key.len == sizeof("html") - 1
                        && ngx_strncmp(key.data, "html", sizeof("html") - 1)
-                       == 0)
+                          == 0)
             {
                 scf->fmt = NGX_HTTP_STATS_ECHO_HTML;
+
+            } else if (key.len == sizeof("raw") - 1
+                       && ngx_strncmp(key.data, "raw", sizeof("raw") - 1) == 0)
+            {
+                scf->fmt = NGX_HTTP_STATS_ECHO_RAW;
 
             } else {
                 ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
